@@ -180,20 +180,26 @@ class FelicityEss(Battery):
             logger.debug(f"Felicity_ESS: readCellData() reponse {dataList}")
 
             if len(dataList) >= 24:
-                # first 16 entries are cell voltage in mV
+                
                 cnt = 0
                 tmpVoltage = 0
                 for ist in dataList:
+                    # first 16 entries are cell voltage in mV
                     if cnt <= self.cell_count - 1: #cellvoltages
                         self.cells[cnt].voltage = ist / 1000 # mV to V
                         tmpVoltage = tmpVoltage + self.cells[cnt].voltage
                         logger.debug(f"Felicity_ESS: readCellData() cell voltage " + str(cnt) + " " + str(ist) + "mV")
-                        
+                    # 17-24 ciontaining temperature informations (temp 5-8 seems to be not connected/supported)
                     elif cnt <= 24 - 1:
                         self.temps[cnt-self.cell_count] = ist
                         logger.debug(f"Felicity_ESS: readCellData() temp " + str(cnt-16) + " " + str(ist) + "degC")
                     cnt += 1
                 
+                # assign to temps
+                self.temp1 = self.temps[0]
+                self.temp2 = self.temps[1]
+                self.temp3 = self.temps[2]
+                self.temp4 = self.temps[3]
                 logger.debug(f"Felicity_ESS: readCellData() tmp bat voltage " + str(tmpVoltage) + "V")
                 return True
             else:
@@ -203,14 +209,12 @@ class FelicityEss(Battery):
                 return False
         
         except Exception as e:
-            logger.debug(
-                f"Felicity_ESS: readCellData() failed to request cell voltages / temps ({e})"
-            )
+            logger.debug(f"Felicity_ESS: readCellData() failed to request cell voltages / temps ({e})")
 
             return False
         
     def readLimits(self,mb):
-        #collect cell ist
+        #collect limits
         try: 
             dataList = mb.read_registers(registeraddress=0x131C, number_of_registers=0x04, functioncode=3)
             logger.debug(f"Felicity_ESS: readLimits() reponse {dataList}")
@@ -226,9 +230,7 @@ class FelicityEss(Battery):
                 self.max_battery_discharge_current = dataList[3] / 10
                 return True
             else:
-                logger.debug(
-                    f"Felicity_ESS: readLimits() return ist length < 4 --> " + str(len(dataList))
-                )
+                logger.debug(f"Felicity_ESS: readLimits() return ist length < 4 --> " + str(len(dataList)))
                 return False
         
         except Exception as e:
@@ -239,7 +241,7 @@ class FelicityEss(Battery):
             return False
         
     def readBatInfo(self,mb):
-        #collect cell ist
+        #collect bat info
         try: 
             dataList = mb.read_registers(registeraddress=0x1302, number_of_registers=0x0A, functioncode=3)
             logger.debug(f"Felicity_ESS: readBatInfo() reponse {dataList}")
@@ -284,4 +286,9 @@ class FelicityEss(Battery):
             return False
 
 
-
+# ToDo:
+#  - temp min/max
+#  - charge allow / discharge allow
+#  - intermediate charge?
+#  - error / fault handling  --> self.protection = Protection()
+#  - check min/max voltage - are this the values for may charge/discharge?
