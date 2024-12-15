@@ -565,18 +565,17 @@ line=$(cat /data/etc/dbus-serialbattery/utils.py | grep DRIVER_VERSION | awk -F'
 echo "*** dbus-serialbattery $line was installed. ***"
 echo
 echo
-echo "####################################"
-echo "# Help to keep this project alive! #"
-echo "####################################"
 echo
-echo "Your support keeps this project alive!"
-echo "If you find this project valuable, please consider making a donation."
-echo "Your contribution helps me continue improving and maintaining it."
-echo "Every donation, no matter the size, makes a difference."
-echo "Copy the link below and paste it into your browser to donate:"
-echo
-echo "https://www.paypal.com/donate/?hosted_button_id=3NEVZBDM5KABW"
-echo
-echo "Cheers, mr-manuel"
+echo "End of local re-install"
 echo
 echo
+echo
+sh restart-driver.sh
+echo
+echo
+echo
+echo "done all;-)"
+echo "cheers, basti (bc_engineering)"
+echo
+echo
+

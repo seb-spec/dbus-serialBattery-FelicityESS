@@ -298,15 +298,15 @@ class Battery(ABC):
 
         :return: the unique identifier
         """
-        # if utils.USE_PORT_AS_UNIQUE_ID:
-        #     return self.port + ("__" + utils.bytearray_to_string(self.address).replace("\\", "0") if self.address is not None else "")
-        # else:
-            #string = "".join(filter(str.isalnum, str(self.hardware_version))) + "_" if self.hardware_version is not None and self.hardware_version != "" else ""
-            #string += str(self.capacity) + "Ah"
+        if utils.USE_PORT_AS_UNIQUE_ID:
+            return self.port + ("__" + utils.bytearray_to_string(self.address).replace("\\", "0") if self.address is not None else "")
+        else:
+            string = "".join(filter(str.isalnum, str(self.hardware_version))) + "_" if self.hardware_version is not None and self.hardware_version != "" else ""
+            string += str(self.capacity) + "Ah"
         
-        #return string
-        resp = self.hardware_version
-        return resp
+        return string
+        # resp = self.hardware_version
+        # return resp
 
     def connection_name(self) -> str:
         """

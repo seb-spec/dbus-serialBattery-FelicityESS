@@ -5,7 +5,7 @@
 # in the documentation for a checklist what you have to do, when adding a new BMS
 
 # avoid importing wildcards
-from battery import Protection, Battery, Cell
+from battery import Protection, Battery, Cell, History
 from utils import is_bit_set, read_serial_data, logger
 import utils
 from typing import Union
@@ -31,7 +31,7 @@ class FelicityEss(Battery):
         self.soc = 0
         self.bat_status = 0
         self.bat_fault_status = 0
-        self.hardware_version = "HwVersionNotSupported"
+        self.hardware_version = "noHwVer - driver by: bc_engineering"
         self.capacity = utils.BATTERY_CAPACITY
         self.mbdev: Union[minimalmodbus.Instrument, None] = None
         if address is not None and len(address) > 0:
@@ -39,6 +39,12 @@ class FelicityEss(Battery):
         else:
             self.slaveaddress: int = 1
         self.firmwareVersion = 0
+        self.protection = Protection()
+        self.history = History()
+        self.charge_fet = None
+        self.discharge_fet = None
+        self.control_allow_charge = None
+        self.control_allow_discharge = None
         self.get_settings()
 
     BATTERYTYPE = "Felicity_ESS_modbus"
@@ -120,36 +126,26 @@ class FelicityEss(Battery):
         # Set the current limits, populate cell count, etc
         # Return True if success, False for failure
 
-        self.capacity = (
-            utils.BATTERY_CAPACITY  # if possible replace constant with value read from BMS
-        )
-        self.max_battery_charge_current = (
-            utils.MAX_BATTERY_CHARGE_CURRENT  # if possible replace constant with value read from BMS
-        )
-        self.max_battery_discharge_current = (
-            utils.MAX_BATTERY_DISCHARGE_CURRENT  # if possible replace constant with value read from BMS
-        )
-        self.max_battery_voltage = utils.MAX_CELL_VOLTAGE * self.cell_count
-        self.min_battery_voltage = utils.MIN_CELL_VOLTAGE * self.cell_count
-
-
         # initialize cell array
         cnt = 1
         while cnt <= self.cell_count:
             self.cells.append(Cell(False))
             cnt += 1
         
+        # initialize temp array
         cnt = 1
         while cnt <= self.temp_count:
             self.temps.append(-10) # init -10degC --> no charge / discharge
             cnt += 1
 
+        # initialize single temps
         self.temp1: float = None
         self.temp2: float = None
         self.temp3: float = None
         self.temp4: float = None
 
-        return True
+        # call once data from BMS to get defaults
+        return self.refresh_data()
 
     def refresh_data(self):
         # call all functions that will refresh the battery ist.
@@ -168,7 +164,10 @@ class FelicityEss(Battery):
         # collect battery infos
         infoValidity = self.readBatInfo(mb)
 
-        logger.debug(f"Felicity_ESS: refresh_data() cellDataValidity="+ str(cellDataValidity) + ";" +"limitsValidity"+ str(limitsValidity) + ";"+"infoValidity"+ str(infoValidity))
+        # set needed battery protection
+        self.processBatteryProtection()
+
+        logger.debug(f"Felicity_ESS: refresh_data() cellDataValidity="+ str(cellDataValidity) + ";" +"limitsValidity="+ str(limitsValidity) + ";"+"infoValidity="+ str(infoValidity))
 
         return (cellDataValidity and limitsValidity and infoValidity) #return True in case connection is established and ist is valid
 
@@ -225,9 +224,17 @@ class FelicityEss(Battery):
                 # 2 is charge current limit in 0.1A
                 # 3 is charge discharge current limit in 0.1A
                 self.max_battery_voltage = dataList[0] / 100
+                logger.debug(f"Felicity_ESS: readLimits() self.max_battery_voltage: " + str(self.max_battery_voltage))
+
                 self.min_battery_voltage = dataList[1] / 100
+                logger.debug(f"Felicity_ESS: readLimits() self.min_battery_voltage: " + str(self.min_battery_voltage))
+
                 self.max_battery_charge_current = dataList[2] / 10
+                logger.debug(f"Felicity_ESS: readLimits() self.max_battery_charge_current: " + str(self.max_battery_charge_current))
+
                 self.max_battery_discharge_current = dataList[3] / 10
+                logger.debug(f"Felicity_ESS: readLimits() self.max_battery_discharge_current: " + str(self.max_battery_discharge_current))
+
                 return True
             else:
                 logger.debug(f"Felicity_ESS: readLimits() return ist length < 4 --> " + str(len(dataList)))
@@ -258,20 +265,25 @@ class FelicityEss(Battery):
                 # 8 BMS Temp in degC
                 # 9 SOC in %
                 self.soc = dataList[9]
-                self.bms_temp = dataList[8]
-                self.temp_mos = self.bms_temp
-                self.bat_status = dataList[0] # bitwise coded - Todo
-                self.bat_fault_status = dataList[2] # bitwise coded - Todo
-                self.voltage = dataList[4] / 100
-                self.current = dataList[5] / 10
                 logger.debug(f"Felicity_ESS: readBatInfo() self.soc " + str(self.soc))
-                logger.debug(f"Felicity_ESS: readBatInfo() self.bms_temp " + str(self.bms_temp))
-                logger.debug(f"Felicity_ESS: readBatInfo() self.temp_mos " + str(self.temp_mos))
-                logger.debug(f"Felicity_ESS: readBatInfo() self.bat_status " + str(self.bat_status))
-                logger.debug(f"Felicity_ESS: readBatInfo() self.bat_fault_status " + str(self.bat_fault_status))
-                logger.debug(f"Felicity_ESS: readBatInfo() self.voltage " + str(self.voltage))
-                logger.debug(f"Felicity_ESS: readBatInfo() self.current " + str(self.current))
 
+                self.bms_temp = dataList[8]
+                logger.debug(f"Felicity_ESS: readBatInfo() self.bms_temp " + str(self.bms_temp))
+
+                self.temp_mos = self.bms_temp
+                logger.debug(f"Felicity_ESS: readBatInfo() self.temp_mos " + str(self.temp_mos))
+
+                self.bat_status = dataList[0]
+                logger.debug(f"Felicity_ESS: readBatInfo() self.bat_status " + str(self.bat_status))
+
+                self.bat_fault_status = dataList[2]
+                logger.debug(f"Felicity_ESS: readBatInfo() self.bat_fault_status " + str(self.bat_fault_status))
+
+                self.voltage = dataList[4] / 100
+                logger.debug(f"Felicity_ESS: readBatInfo() self.voltage " + str(self.voltage))
+
+                self.current = dataList[5] / 10                
+                logger.debug(f"Felicity_ESS: readBatInfo() self.current " + str(self.current))
 
                 return True
             else:
@@ -284,11 +296,62 @@ class FelicityEss(Battery):
             )
 
             return False
+        
+    def processBatteryProtection(self):
+        # check general status (allow and error)
+        self.charge_fet = self.isBitSet(self.bat_status,0) and not self.isBitSet(self.bat_fault_status,2)
+        self.control_allow_charge = self.isBitSet(self.bat_status,0) and not self.isBitSet(self.bat_fault_status,2)
+
+        self.discharge_fet = self.isBitSet(self.bat_status,2) and not self.isBitSet(self.bat_fault_status,3)
+        self.control_allow_discharge = self.isBitSet(self.bat_status,2) and not self.isBitSet(self.bat_fault_status,3)
+
+        # reset protections
+        self.protection.high_voltage = Protection.OK if self.voltage < self.max_battery_voltage else Protection.ALARM
+        self.protection.high_cell_voltage = Protection.OK if self.isBitSet(self.bat_fault_status,2) == False else Protection.ALARM
+        self.protection.low_voltage = Protection.OK if self.voltage > self.min_battery_voltage else Protection.ALARM
+        self.protection.low_cell_voltage = Protection.OK if self.isBitSet(self.bat_fault_status,3) == False else Protection.ALARM
+        if self.soc < 10:
+            self.protection.low_soc = Protection.WARNING
+        elif self.soc <= 0:
+            self.protection.low_soc = Protection.ALARM
+        else:
+            self.protection.low_soc = Protection.OK
+        self.protection.high_charge_current = Protection.OK if self.isBitSet(self.bat_fault_status,4) == False else Protection.ALARM
+        self.protection.high_discharge_current = Protection.OK if self.isBitSet(self.bat_fault_status,5) == False else Protection.ALARM
+        self.protection.cell_imbalance = Protection.OK
+        self.protection.internal_failure = Protection.OK
+        self.protection.high_charge_temp = Protection.OK if self.isBitSet(self.bat_fault_status,8) == False else Protection.ALARM
+        self.protection.low_charge_temp = Protection.OK if self.isBitSet(self.bat_fault_status,9) == False else Protection.ALARM
+        self.protection.high_temperature = Protection.OK if self.isBitSet(self.bat_fault_status,8) == False else Protection.ALARM
+        self.protection.low_temperature = Protection.OK if self.isBitSet(self.bat_fault_status,9) == False else Protection.ALARM
+        self.protection.high_internal_temp = Protection.OK if self.isBitSet(self.bat_fault_status,6) == False else Protection.ALARM
+        self.protection.fuse_blown = Protection.OK
+
+        # check if any error is present
+        if self.bat_fault_status > 0:
+            logger.error(f"Felicity_ESS: processBatteryProtection() error detected, diable battery operation!")
+            logger.error(f"Felicity_ESS: processBatteryProtection() Cell voltage high status Error: " + str(self.isBitSet(self.bat_fault_status,2)))
+            logger.error(f"Felicity_ESS: processBatteryProtection() Cell voltage low status Error: " + str(self.isBitSet(self.bat_fault_status,3)))
+            logger.error(f"Felicity_ESS: processBatteryProtection() Charge current high status Error: " + str(self.isBitSet(self.bat_fault_status,4)))
+            logger.error(f"Felicity_ESS: processBatteryProtection() Discharge current high status Error: " + str(self.isBitSet(self.bat_fault_status,5)))
+            logger.error(f"Felicity_ESS: processBatteryProtection() BMS Temperature high status Error: " + str(self.isBitSet(self.bat_fault_status,6)))
+            logger.error(f"Felicity_ESS: processBatteryProtection() Cell Temperature high status Error: " + str(self.isBitSet(self.bat_fault_status,8)))
+            logger.error(f"Felicity_ESS: processBatteryProtection() Cell Temperature low status Error: " + str(self.isBitSet(self.bat_fault_status,9)))
+
+            # additional overtemp shutoff
+            if (self.isBitSet(self.bat_fault_status,6) or self.isBitSet(self.bat_fault_status,8) or self.isBitSet(self.bat_fault_status,9)): 
+                self.discharge_fet = False
+                self.control_allow_discharge = False
+                self.charge_fet = False
+                self.control_allow_charge = False
 
 
+
+    def isBitSet(self,n, k):
+        if n & (1 << k):
+            return True
+        else:
+            return False
 # ToDo:
-#  - temp min/max
-#  - charge allow / discharge allow
-#  - intermediate charge?
-#  - error / fault handling  --> self.protection = Protection()
-#  - check min/max voltage - are this the values for may charge/discharge?
+#  - charge immediately? --> limit min SOC to 5% in VenusOS ESS-Settings
+

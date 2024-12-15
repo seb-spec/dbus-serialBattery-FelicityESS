@@ -151,18 +151,17 @@ def main():
                         _bms_address = test["address"]
                     else:
                         _bms_address = None
-                    try:
-                        logger.info(
-                            "Testing "
-                            + test["bms"].__name__
-                            + (' at address "' + utils.bytearray_to_string(_bms_address) + '"' if _bms_address is not None else "")
-                        )
-                        batteryClass = test["bms"]
-                        baud = test["baud"] if "baud" in test else None
-                        
-                        battery: Battery = batteryClass(port=_port, baud=baud, address=_bms_address)
-                    except Exception as e:
-                        logger.debug(f"Error initializing battery class: ({e})")
+
+                    logger.info(
+                        "Testing "
+                        + test["bms"].__name__
+                        + (' at address "' + utils.bytearray_to_string(_bms_address) + '"' if _bms_address is not None else "")
+                    )
+                    batteryClass = test["bms"]
+                    baud = test["baud"] if "baud" in test else None
+                    
+                    battery: Battery = batteryClass(port=_port, baud=baud, address=_bms_address)
+
                     if battery.test_connection() and battery.validate_data():
                         logger.info("-- Connection established to " + battery.__class__.__name__)
                         return battery
