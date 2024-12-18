@@ -223,16 +223,32 @@ class FelicityEss(Battery):
                 # 1 is discharge charge voltage limit in 0.01V
                 # 2 is charge current limit in 0.1A
                 # 3 is charge discharge current limit in 0.1A
-                self.max_battery_voltage = dataList[0] / 100
+                maxVoltBMS = dataList[0] / 100
+                if (maxVoltBMS > utils.MAX_CELL_VOLTAGE * self.cell_count):
+                    self.max_battery_voltage = utils.MAX_CELL_VOLTAGE * self.cell_count
+                else:
+                    self.max_battery_voltage = maxVoltBMS
                 logger.debug(f"Felicity_ESS: readLimits() self.max_battery_voltage: " + str(self.max_battery_voltage))
 
-                self.min_battery_voltage = dataList[1] / 100
+                minVoltBMS = dataList[1] / 100
+                if (minVoltBMS < utils.MIN_CELL_VOLTAGE * self.cell_count):
+                    self.min_battery_voltage = utils.MIN_CELL_VOLTAGE * self.cell_count
+                else:
+                    self.min_battery_voltage = minVoltBMS
                 logger.debug(f"Felicity_ESS: readLimits() self.min_battery_voltage: " + str(self.min_battery_voltage))
 
-                self.max_battery_charge_current = dataList[2] / 10
+                maxChrgCurBMS = dataList[2] / 10
+                if (maxChrgCurBMS > utils.MAX_BATTERY_CHARGE_CURRENT):
+                    self.max_battery_charge_current = utils.MAX_BATTERY_CHARGE_CURRENT
+                else:
+                    self.max_battery_charge_current = maxChrgCurBMS
                 logger.debug(f"Felicity_ESS: readLimits() self.max_battery_charge_current: " + str(self.max_battery_charge_current))
 
-                self.max_battery_discharge_current = dataList[3] / 10
+                maxDischrgCurBMS = dataList[3] / 10
+                if (maxDischrgCurBMS > utils.MAX_BATTERY_DISCHARGE_CURRENT):
+                    self.max_battery_discharge_current = utils.MAX_BATTERY_DISCHARGE_CURRENT
+                else:
+                    self.max_battery_discharge_current = maxDischrgCurBMS
                 logger.debug(f"Felicity_ESS: readLimits() self.max_battery_discharge_current: " + str(self.max_battery_discharge_current))
 
                 return True
@@ -305,6 +321,17 @@ class FelicityEss(Battery):
         self.discharge_fet = self.isBitSet(self.bat_status,2) and not self.isBitSet(self.bat_fault_status,3)
         self.control_allow_discharge = self.isBitSet(self.bat_status,2) and not self.isBitSet(self.bat_fault_status,3)
 
+
+        # disable charge / discharge based on battery current limits
+        if (self.max_battery_charge_current <= 0):
+            self.charge_fet = False
+            self.control_allow_charge = False
+
+        if (self.max_battery_discharge_current <= 0):
+            self.discharge_fet = False
+            self.control_allow_discharge = False
+
+
         # reset protections
         self.protection.high_voltage = Protection.OK if self.voltage < self.max_battery_voltage else Protection.ALARM
         self.protection.high_cell_voltage = Protection.OK if self.isBitSet(self.bat_fault_status,2) == False else Protection.ALARM
@@ -318,14 +345,14 @@ class FelicityEss(Battery):
             self.protection.low_soc = Protection.OK
         self.protection.high_charge_current = Protection.OK if self.isBitSet(self.bat_fault_status,4) == False else Protection.ALARM
         self.protection.high_discharge_current = Protection.OK if self.isBitSet(self.bat_fault_status,5) == False else Protection.ALARM
-        self.protection.cell_imbalance = Protection.OK
-        self.protection.internal_failure = Protection.OK
+        self.protection.cell_imbalance = None
+        self.protection.internal_failure = Protection.OK if self.bat_fault_status == 0 else Protection.ALARM
         self.protection.high_charge_temp = Protection.OK if self.isBitSet(self.bat_fault_status,8) == False else Protection.ALARM
         self.protection.low_charge_temp = Protection.OK if self.isBitSet(self.bat_fault_status,9) == False else Protection.ALARM
         self.protection.high_temperature = Protection.OK if self.isBitSet(self.bat_fault_status,8) == False else Protection.ALARM
         self.protection.low_temperature = Protection.OK if self.isBitSet(self.bat_fault_status,9) == False else Protection.ALARM
         self.protection.high_internal_temp = Protection.OK if self.isBitSet(self.bat_fault_status,6) == False else Protection.ALARM
-        self.protection.fuse_blown = Protection.OK
+        self.protection.fuse_blown = None
 
         # check if any error is present
         if self.bat_fault_status > 0:
