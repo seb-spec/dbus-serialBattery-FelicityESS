@@ -298,7 +298,7 @@ class FelicityEss(Battery):
                 self.voltage = dataList[4] / 100
                 logger.debug(f"Felicity_ESS: readBatInfo() self.voltage " + str(self.voltage))
 
-                self.current = dataList[5] / 10                
+                self.current = -self.unsigned_to_signed_16bit(dataList[5]) / 10                
                 logger.debug(f"Felicity_ESS: readBatInfo() self.current " + str(self.current))
 
                 return True
@@ -312,7 +312,16 @@ class FelicityEss(Battery):
             )
 
             return False
-        
+
+    def unsigned_to_signed_16bit(self,value):
+        # Ensure the value is within 16-bit range
+        value &= 0xFFFF
+        # Check if the value is greater than the max positive value for signed 16-bit
+        if value > 0x7FFF:
+            # Convert to negative value for signed 16-bit
+            value -= 0x10000
+        return value
+       
     def processBatteryProtection(self):
         # check general status (allow and error)
         self.charge_fet = self.isBitSet(self.bat_status,0) and not self.isBitSet(self.bat_fault_status,2)
