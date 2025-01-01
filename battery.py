@@ -227,6 +227,7 @@ class Battery(ABC):
         self.linear_cvl_last_set: int = 0
         self.linear_ccl_last_set: int = 0
         self.linear_dcl_last_set: int = 0
+        self.dcl_locked: bool = False
 
         # list of available callbacks, in order to display the buttons in the GUI
         self.available_callbacks: List[str] = []
@@ -753,6 +754,8 @@ class Battery(ABC):
                     + (f"current_external: {self.current_external:.2f} A\n" if self.current_external is not None else "\n")
                     + f"current_time: {current_time}\n"
                     + f"linear_cvl_last_set: {self.linear_cvl_last_set}\n"
+                    + f"control_discharge_current: {self.control_discharge_current}\n"
+                    + f"dcl_lock: {self.dcl_locked}\n"
                     + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
                     + f"discharge_fet: {self.discharge_fet} • "
                     + f"control_allow_discharge: {self.control_allow_discharge}\n"
@@ -914,6 +917,8 @@ class Battery(ABC):
                     + (f"current_external: {self.current_external:.2f} A\n" if self.current_external is not None else "\n")
                     + f"current_time: {current_time}\n"
                     + f"linear_cvl_last_set: {self.linear_cvl_last_set}\n"
+                    + f"control_discharge_current: {self.control_discharge_current}\n"
+                    + f"dcl_lock: {self.dcl_locked}\n"
                     + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
                     + f"discharge_fet: {self.discharge_fet} • "
                     + f"control_allow_discharge: {self.control_allow_discharge}\n"
@@ -1110,26 +1115,46 @@ class Battery(ABC):
         - if DCL changes to 0
         - if DCL changes more than LINEAR_RECALCULATION_ON_PERC_CHANGE
         """
-        dcl = round(min(discharge_limits), 3)
-        diff = abs(self.control_discharge_current - dcl) if self.control_discharge_current is not None else 0
-        if (
-            int(time()) - self.linear_dcl_last_set >= utils.LINEAR_RECALCULATION_EVERY
-            or (diff >= self.control_discharge_current * utils.LINEAR_RECALCULATION_ON_PERC_CHANGE / 100)
-            or (dcl == 0 and self.control_discharge_current != 0)
-        ):
-            self.linear_dcl_last_set = int(time())
 
-            # Introduce a threshold mechanism to prevent flapping
-            if dcl == 0:
-                self.control_discharge_current = dcl
-                self.discharge_limitation = discharge_limits[min(discharge_limits)]
-            else:
-                # Don't allow recovery if the new allowed current is smaller than 1% of the previous allowed current
-                if self.control_discharge_current == 0 and dcl < utils.MAX_BATTERY_DISCHARGE_CURRENT * utils.DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT:
-                    self.discharge_limitation = discharge_limits[min(discharge_limits)] + " *"
-                else:
-                    self.control_discharge_current = dcl
-                    self.discharge_limitation = discharge_limits[min(discharge_limits)]
+        # new DCL implementation with hysterresis to avoid charge toggle
+        dcl = round(min(discharge_limits), 3)
+        if (dcl <= utils.DCL_DISABLE_HYSTERESIS):
+            self.dcl_locked = True
+        
+        if ((self.dcl_locked == True) and (dcl > utils.DCL_ENABLE_HYSTERESIS)):
+            self.dcl_locked = False
+
+            
+        # diff = abs(self.control_discharge_current - dcl) if self.control_discharge_current is not None else 0
+        # if (
+        #     int(time()) - self.linear_dcl_last_set >= utils.LINEAR_RECALCULATION_EVERY
+        #     or (diff >= self.control_discharge_current * utils.LINEAR_RECALCULATION_ON_PERC_CHANGE / 100)
+        #     or (dcl == 0 and self.control_discharge_current != 0)
+        # ):
+        #     self.linear_dcl_last_set = int(time())
+
+        #     # Introduce a threshold mechanism to prevent flapping
+        #     if dcl == 0:
+        #         self.control_discharge_current = dcl
+        #         self.discharge_limitation = discharge_limits[min(discharge_limits)]
+        #     else:
+        #         # Don't allow recovery if the new allowed current is smaller than 1% of the previous allowed current
+        #         if self.control_discharge_current == 0 and dcl < utils.MAX_BATTERY_DISCHARGE_CURRENT * utils.DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT:
+        #             self.discharge_limitation = discharge_limits[min(discharge_limits)] + " *"
+        #         else:
+        #             self.control_discharge_current = dcl
+        #             self.discharge_limitation = discharge_limits[min(discharge_limits)]
+        
+        
+        # provide changes with each cycle, hysteresis is avoiding toggle.
+        self.linear_dcl_last_set = int(time())
+        
+        if self.dcl_locked == True:
+            self.discharge_limitation = discharge_limits[min(discharge_limits)] + " - DCL Locked (Hysteresis)"
+            self.control_discharge_current = 0
+        else:
+            self.discharge_limitation = discharge_limits[min(discharge_limits)]
+            self.control_discharge_current = dcl
 
         # set allow to discharge to no, if DCL is 0
         if self.control_discharge_current == 0:
