@@ -1116,7 +1116,7 @@ class Battery(ABC):
         - if DCL changes more than LINEAR_RECALCULATION_ON_PERC_CHANGE
         """
 
-        # new DCL implementation with hysterresis to avoid charge toggle
+        # additional DCL implementation with hysterresis to avoid charge toggle
         dcl = round(min(discharge_limits), 3)
         if (dcl <= utils.DCL_DISABLE_HYSTERESIS):
             self.dcl_locked = True
@@ -1125,36 +1125,31 @@ class Battery(ABC):
             self.dcl_locked = False
 
             
-        # diff = abs(self.control_discharge_current - dcl) if self.control_discharge_current is not None else 0
-        # if (
-        #     int(time()) - self.linear_dcl_last_set >= utils.LINEAR_RECALCULATION_EVERY
-        #     or (diff >= self.control_discharge_current * utils.LINEAR_RECALCULATION_ON_PERC_CHANGE / 100)
-        #     or (dcl == 0 and self.control_discharge_current != 0)
-        # ):
-        #     self.linear_dcl_last_set = int(time())
+        diff = abs(self.control_discharge_current - dcl) if self.control_discharge_current is not None else 0
+        if (
+            int(time()) - self.linear_dcl_last_set >= utils.LINEAR_RECALCULATION_EVERY
+            or (diff >= self.control_discharge_current * utils.LINEAR_RECALCULATION_ON_PERC_CHANGE / 100)
+            or (dcl == 0 and self.control_discharge_current != 0)
+        ):
+            self.linear_dcl_last_set = int(time())
 
-        #     # Introduce a threshold mechanism to prevent flapping
-        #     if dcl == 0:
-        #         self.control_discharge_current = dcl
-        #         self.discharge_limitation = discharge_limits[min(discharge_limits)]
-        #     else:
-        #         # Don't allow recovery if the new allowed current is smaller than 1% of the previous allowed current
-        #         if self.control_discharge_current == 0 and dcl < utils.MAX_BATTERY_DISCHARGE_CURRENT * utils.DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT:
-        #             self.discharge_limitation = discharge_limits[min(discharge_limits)] + " *"
-        #         else:
-        #             self.control_discharge_current = dcl
-        #             self.discharge_limitation = discharge_limits[min(discharge_limits)]
+            # Introduce a threshold mechanism to prevent flapping
+            if dcl == 0:
+                self.control_discharge_current = dcl
+                self.discharge_limitation = discharge_limits[min(discharge_limits)]
+            else:
+                # Don't allow recovery if the new allowed current is smaller than 1% of the previous allowed current
+                if self.control_discharge_current == 0 and dcl < utils.MAX_BATTERY_DISCHARGE_CURRENT * utils.DISCHARGE_CURRENT_RECOVERY_THRESHOLD_PERCENT:
+                    self.discharge_limitation = discharge_limits[min(discharge_limits)] + " *"
+                else:
+                    self.control_discharge_current = dcl
+                    self.discharge_limitation = discharge_limits[min(discharge_limits)]
         
         
-        # provide changes with each cycle, hysteresis is avoiding toggle.
-        self.linear_dcl_last_set = int(time())
         
         if self.dcl_locked == True:
             self.discharge_limitation = discharge_limits[min(discharge_limits)] + " - DCL Locked (Hysteresis)"
             self.control_discharge_current = 0
-        else:
-            self.discharge_limitation = discharge_limits[min(discharge_limits)]
-            self.control_discharge_current = dcl
 
         # set allow to discharge to no, if DCL is 0
         if self.control_discharge_current == 0:
