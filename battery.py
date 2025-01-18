@@ -304,10 +304,7 @@ class Battery(ABC):
         else:
             string = "".join(filter(str.isalnum, str(self.hardware_version))) + "_" if self.hardware_version is not None and self.hardware_version != "" else ""
             string += str(self.capacity) + "Ah"
-        
-        return string
-        # resp = self.hardware_version
-        # return resp
+            return string
 
     def connection_name(self) -> str:
         """

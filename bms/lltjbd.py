@@ -18,6 +18,58 @@ from struct import unpack_from, pack
 import struct
 import sys
 
+
+class FilterPT1:
+    def __init__(self, tau, T_s):
+        # tau = time-constant of the filter (higher = slower response, smaller = faster response)
+        # Ts = constant sample time of measurments
+        self.K = 1
+        self.tau = tau
+        self.T_s = T_s
+        self.a = 1 - T_s / (tau + T_s)
+        self.b = self.K * T_s / (tau + T_s)
+        self.prev_y = 0.0  # Previous output
+
+    def update(self, u):
+        """Update the PT1 filter with the new input u."""
+        y = self.a * self.prev_y + self.b * u
+        self.prev_y = y
+        return y
+    
+class FilterFloatingAvg:
+    def __init__(self, num_elements):
+        """
+        Initialize the floating average filter.
+        
+        Parameters:
+        - num_elements: The number of elements over which to average.
+        """
+        self.num_elements = num_elements
+        self.buffer = [0.0] * num_elements  # Circular buffer for input values
+        self.index = 0  # Current index in the buffer
+        self.total = 0.0  # Running total of buffer values
+
+    def update(self, new_value):
+        """
+        Update the filter with a new input value and return the average.
+        
+        Parameters:
+        - new_value: The new input value.
+        
+        Returns:
+        - The current average of the filter.
+        """
+        # Subtract the value that's being overwritten from the total
+        self.total -= self.buffer[self.index]
+        # Add the new value to the total
+        self.total += new_value
+        # Update the buffer with the new value
+        self.buffer[self.index] = new_value
+        # Move to the next index (circularly)
+        self.index = (self.index + 1) % self.num_elements
+        # Return the average
+        return self.total / self.num_elements
+    
 # Protocol registers
 REG_ENTER_FACTORY = 0x00
 REG_EXIT_FACTORY = 0x01
@@ -248,12 +300,15 @@ class LltJbd(Battery):
         self.trigger_force_disable_charge = None
         self.trigger_disable_balancer = None
         self.cycle_capacity = None
+        self.additionalResistance = [0,0,0,0,0,0,0,0,0.0012,0,0,0,0,0,0,0] #added for additional resistance resulting from battery pack configuration
         # list of available callbacks, in order to display the buttons in the GUI
         self.available_callbacks = [
             "force_charging_off_callback",
             "force_discharging_off_callback",
             "turn_balancing_off_callback",
         ]
+        self.cellVoltFilters = []
+        
 
     BATTERYTYPE = "LLT/JBD"
     LENGTH_CHECK = 6
@@ -603,6 +658,10 @@ class LltJbd(Battery):
         return True
 
     def read_cell_data(self):
+        if len(self.cellVoltFilters) == 0:
+            for c in range(self.cell_count):
+                self.cellVoltFilters.append(FilterFloatingAvg(8))
+
         cell_data = self.read_serial_data_llt(self.command_cell)
         # check if connect success
         if cell_data is False or len(cell_data) < self.cell_count * 2:
@@ -612,7 +671,8 @@ class LltJbd(Battery):
             try:
                 cell_volts = unpack_from(">H", cell_data, c * 2)
                 if len(cell_volts) != 0:
-                    self.cells[c].voltage = cell_volts[0] / 1000
+                    tmpVolt = cell_volts[0] / 1000 - (self.additionalResistance[c] * self.current)
+                    self.cells[c].voltage = self.cellVoltFilters[c].update(tmpVolt)
             except struct.error:
                 self.cells[c].voltage = 0
         return True

@@ -51,12 +51,12 @@ class DbusHelper:
             + ("__" + str(bms_address) if bms_address is not None and bms_address != 0 else "")
         )
         self._dbusservice = VeDbusService(self._dbusname, get_bus(), register=False)
-        self.bms_id = self.battery.unique_identifier()
-        # self.bms_id = "".join(
-        #     # remove all non alphanumeric characters from the identifier
-        #     c if c.isalnum() else "_"
-        #     for c in self.battery.unique_identifier()
-        # )
+        #self.bms_id = self.battery.unique_identifier()
+        self.bms_id = "".join(
+            # remove all non alphanumeric characters from the identifier
+            c if c.isalnum() else "_"
+            for c in self.battery.unique_identifier()
+        )
         self.path_battery = None
         self.save_charge_details_last = {
             "allow_max_voltage": self.battery.allow_max_voltage,
