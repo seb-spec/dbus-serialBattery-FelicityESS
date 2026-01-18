@@ -609,6 +609,12 @@ class DbusHelper:
             writeable=True,
             onchangecallback=self.battery.turn_balancing_off_callback,
         )
+        self._dbusservice.add_path(
+            "/Io/DisableCvl",
+            (0 if "disable_cvl_callback" in self.battery.available_callbacks else None),
+            writeable=True,
+            onchangecallback=self.battery.disable_cvl_callback,
+        )
         # self._dbusservice.add_path('/SystemSwitch', 1, writeable=True)
 
         # Create the alarms

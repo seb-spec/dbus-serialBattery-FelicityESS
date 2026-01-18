@@ -228,6 +228,7 @@ class Battery(ABC):
         self.linear_ccl_last_set: int = 0
         self.linear_dcl_last_set: int = 0
         self.dcl_locked: bool = False
+        self.disable_cvl_ui = False
 
         # list of available callbacks, in order to display the buttons in the GUI
         self.available_callbacks: List[str] = []
@@ -414,7 +415,7 @@ class Battery(ABC):
             self.soc_reset_voltage_management()
 
         # apply dynamic charging voltage
-        if utils.CVCM_ENABLE:
+        if utils.CVCM_ENABLE and not self.disable_cvl_ui:
             # apply linear charging voltage
             if utils.LINEAR_LIMITATION_ENABLE:
                 self.manage_charge_voltage_linear()
@@ -425,6 +426,22 @@ class Battery(ABC):
         else:
             self.control_voltage = round(self.max_battery_voltage, 2)
             self.charge_mode = "Keep always max voltage"
+            self.charge_mode_debug = (
+                    f"max_battery_voltage: {(self.max_battery_voltage):.2f} V \n"
+                    + f"voltage: {self.voltage:.2f} V\n"
+                    + f"VOLTAGE_DROP: {utils.VOLTAGE_DROP:.2f} V\n"
+                    + f"max_cell_voltage: {self.get_max_cell_voltage()} V\n"
+                    + f"soc: {self.soc}% • soc_calc: {self.soc_calc}%\n"
+                    + f"current: {self.current:.2f}A"
+                    + (f" • current_corrected: {self.current_corrected:.2f} A \n" if self.current_corrected is not None else "\n")
+                    + f"control_discharge_current: {self.control_discharge_current}\n"
+                    + f"dcl_lock: {self.dcl_locked}\n"
+                    + f"cvl_ui_disable: {self.disable_cvl_ui}\n"
+                    + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
+                    + f"discharge_fet: {self.discharge_fet} • "
+                    + f"control_allow_discharge: {self.control_allow_discharge}\n"
+                    + f"block_because_disconnect: {self.block_because_disconnect}"
+                    )
 
     def soc_calculation(self) -> None:
         """
@@ -753,6 +770,7 @@ class Battery(ABC):
                     + f"linear_cvl_last_set: {self.linear_cvl_last_set}\n"
                     + f"control_discharge_current: {self.control_discharge_current}\n"
                     + f"dcl_lock: {self.dcl_locked}\n"
+                    + f"cvl_ui_disable: {self.disable_cvl_ui}\n"
                     + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
                     + f"discharge_fet: {self.discharge_fet} • "
                     + f"control_allow_discharge: {self.control_allow_discharge}\n"
@@ -916,6 +934,7 @@ class Battery(ABC):
                     + f"linear_cvl_last_set: {self.linear_cvl_last_set}\n"
                     + f"control_discharge_current: {self.control_discharge_current}\n"
                     + f"dcl_lock: {self.dcl_locked}\n"
+                    + f"cvl_ui_disable: {self.disable_cvl_ui}\n"
                     + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
                     + f"discharge_fet: {self.discharge_fet} • "
                     + f"control_allow_discharge: {self.control_allow_discharge}\n"
@@ -1924,6 +1943,9 @@ class Battery(ABC):
         return False  # return False to indicate that the callback was not handled
 
     def turn_balancing_off_callback(self, path: str, value: int) -> bool:
+        return False  # return False to indicate that the callback was not handled
+    
+    def disable_cvl_callback(self, path: str, value: int) -> bool:
         return False  # return False to indicate that the callback was not handled
 
     def trigger_soc_reset(self) -> bool:

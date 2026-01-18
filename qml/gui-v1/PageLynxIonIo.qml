@@ -67,6 +67,12 @@ MbPage {
 			show: item.valid
 		}
 
+		MbSwitch {
+			name: qsTr("disable CVL (only for service!)")
+			bind: Utils.path(bindPrefix, "/Io/DisableCvl")
+			show: item.valid
+		}
+
 		MbItemOptions {
 			description: qsTr("External relay")
 			bind: Utils.path(bindPrefix, "/Io/ExternalRelay")

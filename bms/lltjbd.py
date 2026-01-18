@@ -306,8 +306,10 @@ class LltJbd(Battery):
             "force_charging_off_callback",
             "force_discharging_off_callback",
             "turn_balancing_off_callback",
+            "disable_cvl_callback",
         ]
         self.cellVoltFilters = []
+        
         
 
     BATTERYTYPE = "LLT/JBD"
@@ -413,6 +415,20 @@ class LltJbd(Battery):
 
         if value == 1:
             self.trigger_force_disable_charge = True
+            return True
+
+        return False
+
+    def disable_cvl_callback(self, path, value):
+        if value is None:
+            return False
+
+        if value == 0:
+            self.disable_cvl_ui = False
+            return True
+
+        if value == 1:
+            self.disable_cvl_ui = True
             return True
 
         return False
