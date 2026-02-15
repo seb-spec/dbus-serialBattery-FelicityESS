@@ -13,11 +13,144 @@ from utils import (
     ZERO_CHAR,
     SOC_LOW_ALARM,
     SOC_LOW_WARNING,
+    MIN_CELL_VOLTAGE,
+    MAX_CELL_VOLTAGE,
+    MQTT_SERVER,
+    CELL_VOLT_FROM_MQTT
 )
 from struct import unpack_from, pack
 import struct
 import sys
 
+# imports for new MQTT if
+import threading
+import paho.mqtt.client as mqtt
+import time
+import json
+
+class MQTTHandler:
+    def __init__(self, broker, port=1883, client_id=None, username=None, password=None, keepalive=15):
+        self.broker = broker
+        self.port = port
+        self.keepalive = keepalive
+        self.topics = set()
+        self._connected = False
+        self.isSubscribed = False
+        self.enaMqtt = True
+
+        self.client = mqtt.Client(client_id=client_id)
+
+        if username and password:
+            self.client.username_pw_set(username, password)
+
+
+        self.cellVoltages = [0] * 16
+        self.cellVoltTs = [0] * 16
+
+        # Attach callbacks
+        self.client.on_connect = self._on_connect
+        self.client.on_disconnect = self._on_disconnect
+        self.client.on_message = self._on_message
+    def getMqttEna(self):
+        return self.enaMqtt
+        
+    def getCellVoltage(self,cellNr):
+        logger.debug("MQTT IF: cellVoltageRequest for cell " + str(cellNr))
+        logger.debug("MQTT IF: voltage " + str(self.cellVoltages[cellNr]))
+        logger.debug("MQTT IF: ts " + str(self.cellVoltTs[cellNr]))
+        return self.cellVoltages[cellNr], self.cellVoltTs[cellNr]
+
+    # --------------------
+    # Connection Handling
+    # --------------------
+    def connect(self):
+        """Connect to MQTT broker and start network loop."""
+        self.client.connect(self.broker, self.port, self.keepalive)
+        self.client.loop_start()
+
+        # Optional: wait for connection
+        timeout = 1
+        start = time.time()
+        while not self._connected and time.time() - start < timeout:
+            time.sleep(0.1)
+
+        return self._connected
+
+    def disconnect(self):
+        """Disconnect cleanly from broker."""
+        self.client.loop_stop()
+        self.client.disconnect()
+        self.isSubscribed = False
+
+    def is_connected(self):
+        """Check connection state."""
+        return self._connected
+    
+    def reconnect(self):
+        if self.is_connected() == False:
+            logger.error("MQTT IF: reconnect needed!")
+            self.connect()
+
+    # --------------------
+    # Topic Handling
+    # --------------------
+    def subscribe(self, topic):
+        """Subscribe to a topic."""
+        self.client.subscribe(topic)
+        logger.info("MQTT subscribed to: " + topic)
+        #self.isSubscribed = True
+        #self.topics.add(topic)
+    
+    def is_subsribed(self):
+        return self.isSubscribed
+
+    def set_subsribed(self,subsc):
+        self.isSubscribed = subsc
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        """Publish a message."""
+        if not self._connected:
+            raise RuntimeError("MQTT client not connected")
+        self.client.publish(topic, payload, qos=qos, retain=retain)
+
+    def get_topics(self):
+        """Return list of subscribed topics."""
+        return list(self.topics)
+
+    # --------------------
+    # Internal Callbacks
+    # --------------------
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc == 0:
+            self.isSubscribed = False
+            logger.info("MQTT IF Connected to broker")
+            self._connected = True
+            # for subscription in self.topics:
+            #     logger.info("MQTT subscribe to topic: " + subscription)
+        else:
+            logger.error(f"MQTT IF Connection failed with code {rc}")
+
+    def _on_disconnect(self, client, userdata, rc):
+        logger.error("MQTT IF Disconnected from broker")
+        self._connected = False
+
+    def _on_message(self, client, userdata, msg):
+        logger.debug("MQTT _on_message() called")
+        logger.debug(f"Received message on {msg.topic}: {msg.payload.decode()}")
+
+        if msg.topic == "lltjbd/ena":
+            self.enaMqtt = int(msg.payload.decode())
+        else:
+            try:
+                splitted = msg.topic.split("_")
+                idx = int(splitted[-1].replace("/state",""))-1
+                payload_str = msg.payload.decode()
+                self.cellVoltages[idx] = float(payload_str)
+                self.cellVoltTs[idx] = time.time()
+                
+            except:
+                logger.error("MQTT IF: error parsing topic: " + msg.topic)
+                logger.error("MQTT IF: with payload: " + str(msg.payload))
 
 class FilterPT1:
     def __init__(self, tau, T_s):
@@ -300,6 +433,9 @@ class LltJbd(Battery):
         self.trigger_force_disable_charge = None
         self.trigger_disable_balancer = None
         self.cycle_capacity = None
+        logger.info("debugLog: init mqtt")
+        self.mqtt = MQTTHandler(MQTT_SERVER)
+        logger.info("debugLog: mqtt init done.")
         self.additionalResistance = [0,0,0,0,0,0,0,0,0.0012,0,0,0,0,0,0,0] #added for additional resistance resulting from battery pack configuration
         # list of available callbacks, in order to display the buttons in the GUI
         self.available_callbacks = [
@@ -309,6 +445,11 @@ class LltJbd(Battery):
             "disable_cvl_callback",
         ]
         self.cellVoltFilters = []
+        self.mqttCellVoltages = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+        self.mqttCellVoltValid = False
+        self.mqttCellVoltValidZ1 = False
+        self.useMqttIf = True
+        logger.info("debugLog: lltjbd init done")
         
         
 
@@ -327,6 +468,30 @@ class LltJbd(Battery):
         Return True if success, False for failure
         """
         result = False
+        try:
+            if CELL_VOLT_FROM_MQTT:
+                logger.info("connect MQTT interface for cell voltages!")
+                # for i in range(16):
+                #         cellNr = i + 1
+                #         if cellNr < 10:
+                #             cellNrStr = "0" + str(cellNr)
+                #         else:
+                #             cellNrStr = str(cellNr)
+                #         self.mqtt.subscribe("battery_monitoring/sensor/neey_cell_voltage_" + cellNrStr)
+                if not self.mqtt.connect():
+                    logger.error("MQTT inital connection failed!")
+        except Exception:
+            (
+                exception_type,
+                exception_object,
+                exception_traceback,
+            ) = sys.exc_info()
+            file = exception_traceback.tb_frame.f_code.co_filename
+            line = exception_traceback.tb_lineno
+            logger.error(f"MQTT Exception occurred: {repr(exception_object)} of type {exception_type} in {file} line #{line}")
+            
+
+
         try:
             # LLT/JBD does not seem to support addresses, so launch only on address 0x00
             if self.address != b"\x00":
@@ -674,6 +839,7 @@ class LltJbd(Battery):
         return True
 
     def read_cell_data(self):
+        
         if len(self.cellVoltFilters) == 0:
             for c in range(self.cell_count):
                 self.cellVoltFilters.append(FilterFloatingAvg(8))
@@ -691,6 +857,59 @@ class LltJbd(Battery):
                     self.cells[c].voltage = self.cellVoltFilters[c].update(tmpVolt)
             except struct.error:
                 self.cells[c].voltage = 0
+
+
+
+        if CELL_VOLT_FROM_MQTT:
+            if self.mqtt.is_connected() == True: # check if mqtt is general available
+                
+                if self.mqtt.is_subsribed() == False:
+                    for i in range(self.cell_count):
+                        cellNr = i + 1
+                        if cellNr < 10:
+                            cellNrStr = "0" + str(cellNr)
+                        else:
+                            cellNrStr = str(cellNr)
+                        self.mqtt.subscribe("battery_monitoring/sensor/neey_cell_voltage_" + cellNrStr + "/state")
+                    self.mqtt.set_subsribed(True)
+                    self.mqtt.subscribe("lltjbd/ena")
+                self.mqttCellVoltValid = True
+
+                self.useMqttIf = self.mqtt.getMqttEna()
+                if self.useMqttIf:
+                    for c in range(self.cell_count):
+                        voltage, ts = self.mqtt.getCellVoltage(c)
+                        if ts < time.time() - 5:
+                            self.mqttCellVoltValid = False
+                            logger.debug("mqtt cell voltage ts invalid for cell " + str(c))
+                        if voltage > 2.25 and voltage < 3.65:
+                            self.mqttCellVoltages[c] = voltage
+                        else:
+                            self.mqttCellVoltValid = False
+                            logger.debug("mqtt cell voltage out of range for cell " + str(c) + ": " + str(voltage))
+                    
+                    if self.mqttCellVoltValid == True:
+                        self.mqtt.publish("lltjbd/alive",True)
+                        for c in range(self.cell_count):
+                            # write cell vontalge including compensation for cell connection 8-9. (the long one...)
+                            self.cells[c].voltage = self.mqttCellVoltages[c] - (self.additionalResistance[c] * self.current)
+
+                # if self.mqttCellVoltValidZ1 != self.mqttCellVoltValid:
+                #     if self.mqttCellVoltValid == True:
+                #         logger.info("mqtt cell voltages valid again")
+                #     elif self.mqttCellVoltValid == False:
+                #         logger.error("mqtt cell voltages invalid")
+                
+                self.mqttCellVoltValidZ1 = self.mqttCellVoltValid
+                self.mqtt.publish("lltjbd/mqttCellVoltages",json.dumps(self.mqtt.cellVoltages))
+                self.mqtt.publish("lltjbd/cellVoltTs",json.dumps(self.mqtt.cellVoltTs))
+                self.mqtt.publish("lltjbd/mqttCellVoltValid",json.dumps(self.mqttCellVoltValid))
+                self.mqtt.publish("lltjbd/current",self.current)
+                
+
+                logger.debug("mqtt cell voltages: " + str(self.mqttCellVoltages))
+                logger.debug("mqtt cell voltages valid: " + str(self.mqttCellVoltValid))
+
         return True
 
     def read_hardware_data(self):

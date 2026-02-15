@@ -14,7 +14,7 @@ import serial
 
 
 # CONSTANTS
-DRIVER_VERSION: str = "1.5.20260118+FelicityEss+JBD_Mod"
+DRIVER_VERSION: str = "1.5.20260214+NEEY_MQTT"
 """
 current version of the driver
 """
@@ -121,6 +121,11 @@ def check_config_issue(condition: bool, message: str):
     if condition:
         errors_in_config.append(f"**CONFIG ISSUE**: {message}")
 
+
+
+# MQTT SETTINGS:
+CELL_VOLT_FROM_MQTT: bool = get_bool_from_config("DEFAULT", "CELL_VOLT_FROM_MQTT")
+MQTT_SERVER: str = config["DEFAULT"]["MQTT_SERVER"]
 
 # SAVE CONFIG VALUES to constants
 # --------- Battery Current Limits ---------
