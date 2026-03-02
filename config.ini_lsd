@@ -11,7 +11,7 @@ MAX_BATTERY_DISCHARGE_CURRENT = 100.0
 ; --------- Cell Voltages ---------
 ; Description: Cell min/max voltages which are used to calculate the min/max battery voltage
 ; Example: 16 cells * 3.45V/cell = 55.2V max charge voltage. 16 cells * 2.90V = 46.4V min discharge voltage
-MIN_CELL_VOLTAGE   = 2.950
+MIN_CELL_VOLTAGE   = 2.800
 ; Max voltage can seen as absorption voltage
 MAX_CELL_VOLTAGE   = 3.460
 FLOAT_CELL_VOLTAGE = 3.400

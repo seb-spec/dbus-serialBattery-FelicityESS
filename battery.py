@@ -229,6 +229,7 @@ class Battery(ABC):
         self.linear_dcl_last_set: int = 0
         self.dcl_locked: bool = False
         self.disable_cvl_ui = False
+        self.soc_from_bms_ui = False
 
         # list of available callbacks, in order to display the buttons in the GUI
         self.available_callbacks: List[str] = []
@@ -393,7 +394,7 @@ class Battery(ABC):
 
         :return: None
         """
-        if utils.SOC_CALCULATION:
+        if utils.SOC_CALCULATION and self.soc_from_bms_ui == False:
             self.soc_calculation()
         else:
             self.soc_calc = self.soc
@@ -437,6 +438,7 @@ class Battery(ABC):
                     + f"control_discharge_current: {self.control_discharge_current}\n"
                     + f"dcl_lock: {self.dcl_locked}\n"
                     + f"cvl_ui_disable: {self.disable_cvl_ui}\n"
+                    + f"soc_from_bms_ui: {self.soc_from_bms_ui}\n"
                     + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
                     + f"discharge_fet: {self.discharge_fet} • "
                     + f"control_allow_discharge: {self.control_allow_discharge}\n"
@@ -528,7 +530,7 @@ class Battery(ABC):
                 # if there is a SOC from the BMS then use it
                 if self.soc is not None:
                     self.soc_calc_capacity_remain = self.capacity * self.soc / 100
-                    logger.debug("SOC initialized from BMS and set to " + str(self.soc) + "%")
+                    logger.info("SOC initialized from BMS and set to " + str(self.soc) + "%")
                 # else set it to 100%
                 # this is currently (2024.04.13) not possible, since then the driver won't start, if there is no SOC
                 # but leave it in case a BMS without SOC should be added
@@ -771,6 +773,7 @@ class Battery(ABC):
                     + f"control_discharge_current: {self.control_discharge_current}\n"
                     + f"dcl_lock: {self.dcl_locked}\n"
                     + f"cvl_ui_disable: {self.disable_cvl_ui}\n"
+                    + f"soc_from_bms_ui: {self.soc_from_bms_ui}\n"
                     + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
                     + f"discharge_fet: {self.discharge_fet} • "
                     + f"control_allow_discharge: {self.control_allow_discharge}\n"
@@ -935,6 +938,7 @@ class Battery(ABC):
                     + f"control_discharge_current: {self.control_discharge_current}\n"
                     + f"dcl_lock: {self.dcl_locked}\n"
                     + f"cvl_ui_disable: {self.disable_cvl_ui}\n"
+                    + f"soc_from_bms_ui: {self.soc_from_bms_ui}\n"
                     + f"charge_fet: {self.charge_fet} • control_allow_charge: {self.control_allow_charge}\n"
                     + f"discharge_fet: {self.discharge_fet} • "
                     + f"control_allow_discharge: {self.control_allow_discharge}\n"
@@ -1946,6 +1950,9 @@ class Battery(ABC):
         return False  # return False to indicate that the callback was not handled
     
     def disable_cvl_callback(self, path: str, value: int) -> bool:
+        return False  # return False to indicate that the callback was not handled
+    
+    def soc_from_bms_callback(self, path: str, value: int) -> bool:
         return False  # return False to indicate that the callback was not handled
 
     def trigger_soc_reset(self) -> bool:

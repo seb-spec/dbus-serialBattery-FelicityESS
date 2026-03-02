@@ -21,7 +21,7 @@ from utils import (
 from struct import unpack_from, pack
 import struct
 import sys
-
+from time import time
 # imports for new MQTT if
 import threading
 import paho.mqtt.client as mqtt
@@ -36,7 +36,7 @@ class MQTTHandler:
         self.topics = set()
         self._connected = False
         self.isSubscribed = False
-        self.enaMqtt = True
+        self.enaMqtt = False
 
         self.client = mqtt.Client(client_id=client_id)
 
@@ -170,7 +170,7 @@ class FilterPT1:
         return y
     
 class FilterFloatingAvg:
-    def __init__(self, num_elements):
+    def __init__(self, num_elements,initVal = 0.0):
         """
         Initialize the floating average filter.
         
@@ -178,9 +178,9 @@ class FilterFloatingAvg:
         - num_elements: The number of elements over which to average.
         """
         self.num_elements = num_elements
-        self.buffer = [0.0] * num_elements  # Circular buffer for input values
+        self.buffer = [initVal] * num_elements  # Circular buffer for input values
         self.index = 0  # Current index in the buffer
-        self.total = 0.0  # Running total of buffer values
+        self.total = initVal * num_elements  # Running total of buffer values
 
     def update(self, new_value):
         """
@@ -436,15 +436,18 @@ class LltJbd(Battery):
         logger.info("debugLog: init mqtt")
         self.mqtt = MQTTHandler(MQTT_SERVER)
         logger.info("debugLog: mqtt init done.")
-        self.additionalResistance = [0,0,0,0,0,0,0,0,0.0012,0,0,0,0,0,0,0] #added for additional resistance resulting from battery pack configuration
+        self.additionalResistance = [0,0,0,0,0,0,0,0,0.0023,0,0,0,0,0,0,0.001] #added for additional resistance resulting from battery pack configuration
+        self.mqttAdditionalResistance = [0,0,0,0,0,0,0,0,0.0026,0,0,0,0,0,0,0.001]
         # list of available callbacks, in order to display the buttons in the GUI
         self.available_callbacks = [
             "force_charging_off_callback",
             "force_discharging_off_callback",
             "turn_balancing_off_callback",
             "disable_cvl_callback",
+            "soc_from_bms_callback",
         ]
         self.cellVoltFilters = []
+        self.mqttCellVoltFilters = []
         self.mqttCellVoltages = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
         self.mqttCellVoltValid = False
         self.mqttCellVoltValidZ1 = False
@@ -597,6 +600,32 @@ class LltJbd(Battery):
             return True
 
         return False
+    
+    def soc_from_bms_callback(self, path, value):
+        logger.info("soc_from_bms_callback called with value: " + str(value))
+        if value is None:
+            logger.info("SOC will be calculated")
+            self.soc_from_bms_ui = False
+            self.soc_calc_capacity_remain_lasttime = time()
+            return False
+
+        if value == 0:
+            logger.info("SOC will be calculated")
+            self.soc_from_bms_ui = False
+            return True
+
+        if value == 1:
+            logger.info("SOC will be read from BMS")
+            self.soc_calc = None
+            self.soc_calc_capacity_remain = None
+            self.soc_from_bms_ui = True
+            # self.soc_calc_capacity_remain = min(self.soc_calc_capacity_remain * self.soc / 100, self.capacity)
+            # self.soc_calc_capacity_remain_lasttime = time()
+            # self.soc_calc_reset_starttime = None
+            return True
+
+        return False
+
 
     def force_discharging_off_callback(self, path, value):
         if value is None:
@@ -798,7 +827,7 @@ class LltJbd(Battery):
             self.temp_sensors,
         ) = unpack_from(">HhHHHHhHHBBBBB", gen_data)
 
-        self.voltage = voltage / 100
+        #self.voltage = voltage / 100
         self.current = current / 100
 
         # Some requested, that the SOC is calculated by using the cycle_capacity and capacity_remain
@@ -839,10 +868,11 @@ class LltJbd(Battery):
         return True
 
     def read_cell_data(self):
-        
+        totalVoltage = 0
         if len(self.cellVoltFilters) == 0:
             for c in range(self.cell_count):
-                self.cellVoltFilters.append(FilterFloatingAvg(8))
+                self.cellVoltFilters.append(FilterFloatingAvg(8,3.3))
+                self.mqttCellVoltFilters.append(FilterFloatingAvg(10,3.3))
 
         cell_data = self.read_serial_data_llt(self.command_cell)
         # check if connect success
@@ -853,16 +883,39 @@ class LltJbd(Battery):
             try:
                 cell_volts = unpack_from(">H", cell_data, c * 2)
                 if len(cell_volts) != 0:
-                    tmpVolt = cell_volts[0] / 1000 - (self.additionalResistance[c] * self.current)
-                    self.cells[c].voltage = self.cellVoltFilters[c].update(tmpVolt)
-            except struct.error:
+                    
+                    comp = -(self.additionalResistance[c] * self.current)
+                    self.mqtt.publish("lltjbd/cells/cellVoltCurComp_" + str(c),comp)
+
+                    tmpVolt = cell_volts[0] / 1000 
+                    self.mqtt.publish("lltjbd/cells/cellVoltRaw_" + str(c),tmpVolt)
+
+                    flt = self.cellVoltFilters[c].update(tmpVolt)
+                    self.mqtt.publish("lltjbd/cells/cellVoltFilt_" + str(c),flt)
+
+                    self.cells[c].voltage = flt + comp
+                    self.mqtt.publish("lltjbd/cells/cellVolt_" + str(c),self.cells[c].voltage)
+                    totalVoltage = totalVoltage + self.cells[c].voltage
+            # except struct.error:
+            #     self.cells[c].voltage = 0
+            except Exception:
                 self.cells[c].voltage = 0
+                totalVoltage = 0
+                (
+                    exception_type,
+                    exception_object,
+                    exception_traceback,
+                ) = sys.exc_info()
+                file = exception_traceback.tb_frame.f_code.co_filename
+                line = exception_traceback.tb_lineno
+                logger.error(f"MQTT Exception occurred: {repr(exception_object)} of type {exception_type} in {file} line #{line}")
 
 
 
         if CELL_VOLT_FROM_MQTT:
+            
             if self.mqtt.is_connected() == True: # check if mqtt is general available
-                
+                self.mqtt.publish("lltjbd/alive",True)
                 if self.mqtt.is_subsribed() == False:
                     for i in range(self.cell_count):
                         cellNr = i + 1
@@ -877,6 +930,7 @@ class LltJbd(Battery):
 
                 self.useMqttIf = self.mqtt.getMqttEna()
                 if self.useMqttIf:
+                    
                     for c in range(self.cell_count):
                         voltage, ts = self.mqtt.getCellVoltage(c)
                         if ts < time.time() - 5:
@@ -889,22 +943,38 @@ class LltJbd(Battery):
                             logger.debug("mqtt cell voltage out of range for cell " + str(c) + ": " + str(voltage))
                     
                     if self.mqttCellVoltValid == True:
-                        self.mqtt.publish("lltjbd/alive",True)
+                        totalVoltage = 0
                         for c in range(self.cell_count):
                             # write cell vontalge including compensation for cell connection 8-9. (the long one...)
-                            self.cells[c].voltage = self.mqttCellVoltages[c] - (self.additionalResistance[c] * self.current)
+                            self.cells[c].voltage = self.mqttCellVoltFilters[c].update(self.mqttCellVoltages[c]) - (self.additionalResistance[c] * self.current)
+                            totalVoltage = totalVoltage + self.cells[c].voltage
 
                 # if self.mqttCellVoltValidZ1 != self.mqttCellVoltValid:
                 #     if self.mqttCellVoltValid == True:
                 #         logger.info("mqtt cell voltages valid again")
                 #     elif self.mqttCellVoltValid == False:
                 #         logger.error("mqtt cell voltages invalid")
-                
-                self.mqttCellVoltValidZ1 = self.mqttCellVoltValid
-                self.mqtt.publish("lltjbd/mqttCellVoltages",json.dumps(self.mqtt.cellVoltages))
-                self.mqtt.publish("lltjbd/cellVoltTs",json.dumps(self.mqtt.cellVoltTs))
-                self.mqtt.publish("lltjbd/mqttCellVoltValid",json.dumps(self.mqttCellVoltValid))
-                self.mqtt.publish("lltjbd/current",self.current)
+                try:
+                    self.mqttCellVoltValidZ1 = self.mqttCellVoltValid
+                    self.mqtt.publish("lltjbd/mqttCellVoltages",json.dumps(self.mqtt.cellVoltages))
+                    self.mqtt.publish("lltjbd/cellVoltTs",json.dumps(self.mqtt.cellVoltTs))
+                    self.mqtt.publish("lltjbd/mqttCellVoltValid",json.dumps(self.mqttCellVoltValid))
+                    self.mqtt.publish("lltjbd/current",self.current)
+                    self.mqtt.publish("lltjbd/soc_bms",self.soc)
+                    self.mqtt.publish("lltjbd/soc_calc",self.soc_calc)
+                    self.mqtt.publish("lltjbd/bat_voltage",totalVoltage)
+                    if totalVoltage > 0:
+                        self.voltage = totalVoltage
+                    self.mqtt.publish("lltjbd/additionalResistance",json.dumps(self.additionalResistance))
+                except Exception:
+                    (
+                        exception_type,
+                        exception_object,
+                        exception_traceback,
+                    ) = sys.exc_info()
+                    file = exception_traceback.tb_frame.f_code.co_filename
+                    line = exception_traceback.tb_lineno
+                    logger.error(f"MQTT Exception occurred: {repr(exception_object)} of type {exception_type} in {file} line #{line}")
                 
 
                 logger.debug("mqtt cell voltages: " + str(self.mqttCellVoltages))

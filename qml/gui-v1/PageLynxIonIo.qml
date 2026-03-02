@@ -73,6 +73,12 @@ MbPage {
 			show: item.valid
 		}
 
+		MbSwitch {
+			name: qsTr("set soc from BMS")
+			bind: Utils.path(bindPrefix, "/Io/SocFromBMS")
+			show: item.valid
+		}
+
 		MbItemOptions {
 			description: qsTr("External relay")
 			bind: Utils.path(bindPrefix, "/Io/ExternalRelay")

@@ -615,6 +615,12 @@ class DbusHelper:
             writeable=True,
             onchangecallback=self.battery.disable_cvl_callback,
         )
+        self._dbusservice.add_path(
+            "/Io/SocFromBMS",
+            (0 if "soc_from_bms_callback" in self.battery.available_callbacks else None),
+            writeable=True,
+            onchangecallback=self.battery.soc_from_bms_callback,
+        )
         # self._dbusservice.add_path('/SystemSwitch', 1, writeable=True)
 
         # Create the alarms
@@ -869,6 +875,8 @@ class DbusHelper:
         self._dbusservice["/Io/AllowToCharge"] = 1 if self.battery.get_allow_to_charge() else 0
         self._dbusservice["/Io/AllowToDischarge"] = 1 if self.battery.get_allow_to_discharge() else 0
         self._dbusservice["/Io/AllowToBalance"] = 1 if self.battery.get_allow_to_balance() else 0
+        # Publish whether SOC should be taken from the BMS (UI switch)
+        self._dbusservice["/Io/SocFromBMS"] = 1 if self.battery.soc_from_bms_ui else 0
         self._dbusservice["/System/NrOfModulesBlockingCharge"] = 0 if self.battery.get_allow_to_charge() else 1
         self._dbusservice["/System/NrOfModulesBlockingDischarge"] = 0 if self.battery.get_allow_to_discharge() else 1
         self._dbusservice["/System/NrOfModulesOnline"] = 1 if self.battery.online else 0
